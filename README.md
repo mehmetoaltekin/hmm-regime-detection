@@ -15,7 +15,7 @@ the use of these models or strategies.
 
 ## 1. Theoretical Framework
 
-Financial return series rarely follow a single stationary distribution. In practice, markets alternate between distinct market regimes—shifting rapidly between tranquil periods and sudden crisis states. To capture these structural shifts and the resulting time-varying volatility, we model returns using a Hidden Markov Model (HMM).
+Financial return series rarely follow a single stationary distribution. In practice, markets alternate between distinct market regimes shifting rapidly between tranquil periods and sudden crisis states. To capture these structural shifts and the resulting time-varying volatility, we model returns using a Hidden Markov Model (HMM).
 Let $Y_t$ denote the observed return at time $t$. We assume the data-generating process is driven by an unobserved discrete Markov chain $S_t \in \{1, \dots, K\}$, with state transition probabilities given by:
 
 $$P(S_t = j \mid S_{t-1} = i) = A_{ij}$$ 
