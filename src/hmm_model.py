@@ -3,7 +3,7 @@ Market Regime Detection using Gaussian Hidden Markov Models.
 Implements out-of-sample forward filtering and variance-based state sorting.
 """
 
-from typing import Tuple, Optional
+from typing import Optional
 import numpy as np
 import pandas as pd
 from hmmlearn.hmm import GaussianHMM
@@ -66,17 +66,13 @@ class MarketRegimeHMM:
         order = np.argsort(variances)
         self.state_order_ = order
 
-        # Build aligned model
-        aligned_model = GaussianHMM(
-            n_components=self.n_components,
-            covariance_type=self.covariance_type,
-        )
-        aligned_model.startprob_ = raw_model.startprob_[order]
-        aligned_model.transmat_ = raw_model.transmat_[order, :][:, order]
-        aligned_model.means_ = raw_model.means_[order]
-        aligned_model.covars_ = raw_model.covars_[order]
+        # Re-index parameters in-place to preserve internal attributes (n_features)
+        raw_model.startprob_ = raw_model.startprob_[order]
+        raw_model.transmat_ = raw_model.transmat_[order, :][:, order]
+        raw_model.means_ = raw_model.means_[order]
+        raw_model.covars_ = raw_model.covars_[order]
 
-        self.model = aligned_model
+        self.model = raw_model
         return self
 
     def predict_filtered_proba(self, X: np.ndarray) -> np.ndarray:
