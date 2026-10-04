@@ -13,6 +13,11 @@ the use of these models or strategies.
 * **López de Prado, M. (2018).** *Advances in Financial Machine Learning.* John Wiley & Sons. (Bölüm: Structural Breaks & Regime Shifts).
 * **Rabiner, L. R. (1989).** *A Tutorial on Hidden Markov Models and Selected Applications in Speech Recognition.* Proceedings of the IEEE, 77(2), 257–286.
 
+# Market Regime Detection via Walk-Forward Gaussian HMM
+[![CI Status](https://github.com/mehmetoaltekin/hmm-regime-detection/actions/workflows/ci.yml/badge.svg)](https://github.com/mehmetoaltekin/hmm-regime-detection/actions)
+
+An econometric and quantitative research framework...
+
 ## 1. Theoretical Framework
 
 Financial return series rarely follow a single stationary distribution. In practice, markets alternate between distinct market regimes shifting rapidly between tranquil periods and sudden crisis states. To capture these structural shifts and the resulting time-varying volatility, we model returns using a Hidden Markov Model (HMM).
