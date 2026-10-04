@@ -47,6 +47,8 @@ class MarketRegimeHMM:
         if X.ndim == 1:
             X = X.reshape(-1, 1)
 
+        n_samples, n_features = X.shape
+
         raw_model = GaussianHMM(
             n_components=self.n_components,
             covariance_type=self.covariance_type,
@@ -55,7 +57,9 @@ class MarketRegimeHMM:
         )
         raw_model.fit(X)
 
-        # Sort states by total variance (trace of covariance matrix)
+        # Explicitly assign n_features to prevent hmmlearn property lookup error
+        raw_model.n_features = n_features
+
         if self.covariance_type == "full":
             variances = np.array([np.trace(cov) for cov in raw_model.covars_])
         elif self.covariance_type == "diag":
@@ -66,11 +70,12 @@ class MarketRegimeHMM:
         order = np.argsort(variances)
         self.state_order_ = order
 
-        # Re-index parameters in-place to preserve internal attributes (n_features)
+        # Re-index parameters in-place to preserve internal fitted states
         raw_model.startprob_ = raw_model.startprob_[order]
         raw_model.transmat_ = raw_model.transmat_[order, :][:, order]
         raw_model.means_ = raw_model.means_[order]
         raw_model.covars_ = raw_model.covars_[order]
+        raw_model.n_features = n_features
 
         self.model = raw_model
         return self
