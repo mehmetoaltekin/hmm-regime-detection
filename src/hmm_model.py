@@ -1,9 +1,3 @@
-"""
-Market Regime Detection using Gaussian Hidden Markov Models.
-Implements out-of-sample forward filtering and variance-based state sorting.
-"""
-
-from typing import Optional
 import numpy as np
 import pandas as pd
 from hmmlearn.hmm import GaussianHMM
@@ -11,130 +5,99 @@ from hmmlearn.hmm import GaussianHMM
 
 class MarketRegimeHMM:
     """
-    Gaussian Hidden Markov Model for financial regime detection.
+    Gaussian HMM for market regime detection.
     
-    Addresses two critical quantitative pitfalls:
-    1. Label Switching: States are dynamically sorted by variance.
-       State 0 is strictly the lowest volatility regime.
-    2. Look-Ahead Bias: Provides sequential forward filtering
-       P(S_t | Y_{1:t}) instead of smoothed inference P(S_t | Y_{1:T}).
+    States are reordered by variance so state 0 is always the calm/low-vol
+    regime. Forward filtering is used instead of smoothed inference to 
+    avoid lookahead bias during backtests.
     """
 
-    def __init__(
-        self,
-        n_components: int = 2,
-        covariance_type: str = "full",
-        n_iter: int = 100,
-        random_state: int = 42,
-    ) -> None:
+    def __init__(self, n_components=2, covariance_type="full", n_iter=100, random_state=42):
         self.n_components = n_components
         self.covariance_type = covariance_type
         self.n_iter = n_iter
         self.random_state = random_state
 
-        self.model: Optional[GaussianHMM] = None
-        self.state_order_: Optional[np.ndarray] = None
+        self.model = None
+        self.order = None
 
-    def fit(self, X: np.ndarray) -> "MarketRegimeHMM":
-        """
-        Fit the Gaussian HMM and sort hidden states by emission variance.
-
-        Parameters
-        ----------
-        X : np.ndarray of shape (n_samples, n_features)
-            Stationary feature matrix (e.g., returns, rolling volatility).
-        """
+    def fit(self, X):
+        X = np.asarray(X)
         if X.ndim == 1:
             X = X.reshape(-1, 1)
 
         n_samples, n_features = X.shape
 
-        raw_model = GaussianHMM(
+        hmm = GaussianHMM(
             n_components=self.n_components,
             covariance_type=self.covariance_type,
             n_iter=self.n_iter,
             random_state=self.random_state,
         )
-        raw_model.fit(X)
+        hmm.fit(X)
+        hmm.n_features = n_features
 
-        # Explicitly assign n_features to prevent hmmlearn property lookup error
-        raw_model.n_features = n_features
-
+        # Sort regimes by total variance (state 0 = lowest vol)
         if self.covariance_type == "full":
-            variances = np.array([np.trace(cov) for cov in raw_model.covars_])
+            variances = np.array([np.trace(c) for c in hmm.covars_])
         elif self.covariance_type == "diag":
-            variances = np.array([np.sum(cov) for cov in raw_model.covars_])
+            variances = np.array([np.sum(c) for c in hmm.covars_])
         else:
-            variances = raw_model.covars_.flatten()
+            variances = hmm.covars_.flatten()
 
         order = np.argsort(variances)
-        self.state_order_ = order
+        self.order = order
 
-        # Re-index parameters in-place to preserve internal fitted states
-        raw_model.startprob_ = raw_model.startprob_[order]
-        raw_model.transmat_ = raw_model.transmat_[order, :][:, order]
-        raw_model.means_ = raw_model.means_[order]
-        raw_model.covars_ = raw_model.covars_[order]
-        raw_model.n_features = n_features
+        # Align model parameters to the sorted order
+        hmm.startprob_ = hmm.startprob_[order]
+        hmm.transmat_ = hmm.transmat_[order, :][:, order]
+        hmm.means_ = hmm.means_[order]
+        hmm.covars_ = hmm.covars_[order]
+        hmm.n_features = n_features
 
-        self.model = raw_model
+        self.model = hmm
         return self
 
-    def predict_filtered_proba(self, X: np.ndarray) -> np.ndarray:
+    def predict_filtered_proba(self, X):
         """
-        Compute sequential forward-filtered probabilities P(S_t | Y_{1:t}).
-        Guarantees strictly zero look-ahead bias (no future data used).
-
-        Parameters
-        ----------
-        X : np.ndarray of shape (n_samples, n_features)
-            Out-of-sample or in-sample feature series.
-
-        Returns
-        -------
-        filtered_probs : np.ndarray of shape (n_samples, n_components)
-            Sequential regime probabilities at each time step t.
+        Forward filter: computes P(S_t | Y_1:t) online step-by-step
+        without future information.
         """
         if self.model is None:
-            raise ValueError("Model must be fitted before computing probabilities.")
+            raise RuntimeError("Model is not fitted yet.")
 
+        X = np.asarray(X)
         if X.ndim == 1:
             X = X.reshape(-1, 1)
 
         n_samples = len(X)
-        filtered_probs = np.zeros((n_samples, self.n_components))
+        log_trans = np.log(self.model.transmat_)
+        log_start = np.log(self.model.startprob_)
+        frame_log_prob = self.model._compute_log_likelihood(X)
 
-        # Forward algorithm pass
-        framelogprob = self.model._compute_log_likelihood(X)
-        log_transmat = np.log(self.model.transmat_)
-        log_startprob = np.log(self.model.startprob_)
+        filtered = np.zeros((n_samples, self.n_components))
 
-        curr_log_alpha = log_startprob + framelogprob[0]
-        # Normalize in log space to obtain filtered prob at t=0
-        log_norm = np.logaddexp.reduce(curr_log_alpha)
-        filtered_probs[0] = np.exp(curr_log_alpha - log_norm)
+        # t = 0
+        curr_log = log_start + frame_log_prob[0]
+        curr_log -= np.logaddexp.reduce(curr_log)
+        filtered[0] = np.exp(curr_log)
 
+        # t > 0 forward recursion
         for t in range(1, n_samples):
-            # Prior: P(S_t | Y_{1:t-1}) = sum_i P(S_{t-1} | Y_{1:t-1}) * A_{ij}
-            log_prior = np.logaddexp.reduce(
-                curr_log_alpha[:, np.newaxis] + log_transmat, axis=0
-            )
-            # Update: P(S_t | Y_{1:t}) ~ Emission * Prior
-            curr_log_alpha = log_prior + framelogprob[t]
-            log_norm = np.logaddexp.reduce(curr_log_alpha)
-            filtered_probs[t] = np.exp(curr_log_alpha - log_norm)
+            # prior = sum_i( alpha_t-1(i) * A_ij ) in log space
+            prior = np.logaddexp.reduce(curr_log[:, None] + log_trans, axis=0)
+            curr_log = prior + frame_log_prob[t]
+            curr_log -= np.logaddexp.reduce(curr_log)
+            filtered[t] = np.exp(curr_log)
 
-        return filtered_probs
+        return filtered
 
-    def predict_regimes(self, X: np.ndarray) -> np.ndarray:
-        """Return the most likely regime index at each step using filtered probabilities."""
-        probs = self.predict_filtered_proba(X)
-        return np.argmax(probs, axis=1)
+    def predict_regimes(self, X):
+        return np.argmax(self.predict_filtered_proba(X), axis=1)
 
     @property
-    def transition_matrix_(self) -> pd.DataFrame:
-        """Return regime transition matrix as a labeled DataFrame."""
+    def transition_matrix_(self):
         if self.model is None:
-            raise ValueError("Model not fitted.")
-        cols = [f"Regime_{i}" for i in range(self.n_components)]
+            raise RuntimeError("Model is not fitted yet.")
+        cols = [f"regime_{i}" for i in range(self.n_components)]
         return pd.DataFrame(self.model.transmat_, index=cols, columns=cols)
