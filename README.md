@@ -25,7 +25,7 @@ where $A$ is the $K \times K$ transition probability matrix. Conditional on bein
 $$Y_t \mid (S_t = k) \sim \mathcal{N}(\mu_k, \sigma_k^2)$$ 
 
 
-Methodological & Implementation Details 
+# Methodological & Implementation Details 
 
 Applying regime-switching models to sequential financial data introduces three specific estimation challenges that require structural safeguards:
 
@@ -48,10 +48,12 @@ where $\hat{L}$ is the maximized likelihood, $p$ is the number of free parameter
 ## 2. Installation & Quickstart
 
 git clone https://github.com/mehmetoaltekin/hmm-regime-detection.git
+
 cd hmm-regime-detection
+
 pip install -r requirements.txt
 
-Minimal Usage Example
+# Minimal Usage Example
 
 import numpy as np
 from src.data_loader import fetch_returns
