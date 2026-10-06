@@ -1,61 +1,77 @@
-import os
+"""
+Walk-forward regime detection demo.
+
+Every number shown is out-of-sample: the scaler, HMM parameters and the
+number of states are estimated only on data before each bar.
+"""
+
+import matplotlib
+
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 
 from src.data_loader import fetch_sample_data, prepare_hmm_features
-from src.hmm_model import MarketRegimeHMM
+from src.hmm_model import WalkForwardHMM
+from src.model_selection import evaluate_regime_models
+
+WINDOW = 252
+STEP = 21
 
 
 def main():
-    # pull data & prep features
-    df_raw = fetch_sample_data(n_bars=800, seed=42)
-    df, X = prepare_hmm_features(df_raw, vol_window=21)
+    df_raw = fetch_sample_data(n_bars=1000, seed=42)
+    feature_df, X = prepare_hmm_features(df_raw, vol_window=21)
 
-    # 2-state HMM: 0 = low vol, 1 = high vol
-    hmm = MarketRegimeHMM(n_components=2, covariance_type="full", random_state=42)
-    hmm.fit(X)
+    # K comparison on the FIRST training window only (illustration;
+    # the walk-forward below re-selects K inside every window).
+    print("AIC/BIC on the first training window:")
+    print(evaluate_regime_models(X[:WINDOW], components_range=[2, 3, 4]), "\n")
 
-    print("Transition Matrix:")
-    print(np.round(hmm.transition_matrix_, 4))
+    wf = WalkForwardHMM(
+        n_components=[2, 3],
+        window_size=WINDOW,
+        step_size=STEP,
+        covariance_type="full",
+        n_init=5,
+    )
+    out = wf.fit_predict_filtered(feature_df)
+    out["close"] = df_raw.loc[out.index, "Close"]
 
-    # forward-filtered probs (no lookahead)
-    probs = hmm.predict_filtered_proba(X)
-    df["regime"] = hmm.predict_regimes(X)
-    df["prob_high_vol"] = probs[:, 1]
-    df["close"] = df_raw.loc[df.index, "Close"]
+    oos = out.dropna(subset=["prob_regime_0"]).copy()
+    oos["prob_stress"] = 1.0 - oos["prob_regime_0"]
 
-    print("\nRecent rows:")
-    print(df[["close", "log_return", "volatility", "regime", "prob_high_vol"]].tail())
+    print(f"Refits: {len(wf.history_)}  |  K used: "
+          f"{oos['n_states'].value_counts().to_dict()}")
+    print("Latest transition matrix:")
+    print(np.round(wf.history_[-1]["model"].transition_matrix_, 4), "\n")
+    print(oos[["close", "regime", "n_states", "prob_stress"]].tail())
 
-    # quick inspection plot
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 6), sharex=True, gridspec_kw={"height_ratios": [2.5, 1]})
-
-    ax1.plot(df.index, df["close"], color="black", lw=1, label="Close")
-
-    # shade regimes
-    y0, y1 = df["close"].min() * 0.98, df["close"].max() * 1.02
+    fig, (ax1, ax2) = plt.subplots(
+        2, 1, figsize=(12, 6), sharex=True, gridspec_kw={"height_ratios": [2.5, 1]}
+    )
+    ax1.plot(oos.index, oos["close"], color="black", lw=1, label="Close")
+    y0, y1 = oos["close"].min() * 0.98, oos["close"].max() * 1.02
     ax1.set_ylim(y0, y1)
-
-    is_shock = df["regime"] == 1
-    ax1.fill_between(df.index, y0, y1, where=is_shock, color="red", alpha=0.15, label="High Vol")
-    ax1.fill_between(df.index, y0, y1, where=~is_shock, color="green", alpha=0.08, label="Low Vol")
-
-    ax1.set_title("Market Regime Detection (Forward Filtered)")
+    stress = (oos["regime"] > 0).to_numpy()
+    ax1.fill_between(oos.index, y0, y1, where=stress, color="red", alpha=0.15, label="Higher vol")
+    ax1.fill_between(oos.index, y0, y1, where=~stress, color="green", alpha=0.08, label="Calm (state 0)")
+    for h in wf.history_:
+        ax1.axvline(h["refit_time"], color="gray", lw=0.3, alpha=0.4)
+    ax1.set_title("Walk-Forward Regime Detection (out-of-sample, forward filtered)")
     ax1.legend(loc="upper left")
     ax1.grid(True, alpha=0.3)
 
-    # prob plot
-    ax2.plot(df.index, df["prob_high_vol"], color="firebrick", lw=1)
+    ax2.plot(oos.index, oos["prob_stress"], color="firebrick", lw=1)
     ax2.axhline(0.5, color="gray", ls="--", lw=0.8)
-    ax2.set_ylabel("P(High Vol)")
+    ax2.set_ylabel("P(not calm)")
     ax2.set_ylim(-0.02, 1.02)
     ax2.grid(True, alpha=0.3)
 
     plt.tight_layout()
     plt.savefig("regime_detection_plot.png", dpi=150)
     plt.close()
-    print("Done. Saved to regime_detection_plot.png")
+    print("\nSaved regime_detection_plot.png")
 
 
 if __name__ == "__main__":
