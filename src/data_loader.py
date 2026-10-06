@@ -3,7 +3,7 @@ Data loading and stationary feature engineering module for financial time series
 Computes logarithmic returns, realized volatility, and Parkinson volatility.
 """
 
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 import numpy as np
 import pandas as pd
 
@@ -204,3 +204,69 @@ def fetch_sample_data(n_bars: int = 1000, seed: int = 42) -> pd.DataFrame:
         {"Open": open_price, "High": high, "Low": low, "Close": close},
         index=dates,
     )
+
+
+# Common FX / metal symbols mapped to Yahoo Finance tickers.
+_YAHOO_ALIASES: Dict[str, str] = {
+    "XAUUSD": "GC=F",
+    "XAGUSD": "SI=F",
+    "EURUSD": "EURUSD=X",
+    "GBPUSD": "GBPUSD=X",
+    "USDJPY": "JPY=X",
+    "USDTRY": "TRY=X",
+    "BTCUSD": "BTC-USD",
+    "ETHUSD": "ETH-USD",
+}
+
+
+def fetch_returns(
+    ticker: str,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    interval: str = "1d",
+    vol_window: int = 21,
+) -> pd.DataFrame:
+    """
+    Download OHLC data from Yahoo Finance and return stationary HMM features.
+
+    Requires the optional ``yfinance`` package (``pip install yfinance``).
+    Common symbols such as "XAUUSD" are mapped to their Yahoo tickers.
+
+    Parameters
+    ----------
+    ticker : str
+        Symbol, e.g. "SPY", "XAUUSD", "BTCUSD".
+    start, end : str, optional
+        Date bounds, e.g. "2015-01-01".
+    interval : str, default "1d"
+        Bar size passed to yfinance.
+    vol_window : int, default 21
+        Volatility lookback.
+
+    Returns
+    -------
+    pd.DataFrame
+        Columns ``log_return`` and ``volatility``, NaNs dropped, ready for
+        ``WalkForwardHMM.fit_predict_filtered``.
+    """
+    try:
+        import yfinance as yf
+    except ImportError as exc:  # pragma: no cover
+        raise ImportError(
+            "fetch_returns needs yfinance: pip install yfinance"
+        ) from exc
+
+    symbol = _YAHOO_ALIASES.get(ticker.upper(), ticker)
+    raw = yf.download(
+        symbol, start=start, end=end, interval=interval,
+        auto_adjust=True, progress=False,
+    )
+    if raw is None or raw.empty:
+        raise ValueError(f"No data returned for {ticker!r} ({symbol}).")
+
+    # Newer yfinance versions return a (field, ticker) MultiIndex.
+    if isinstance(raw.columns, pd.MultiIndex):
+        raw.columns = raw.columns.get_level_values(0)
+
+    feature_df, _ = prepare_hmm_features(raw, vol_window=vol_window)
+    return feature_df

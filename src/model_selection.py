@@ -1,12 +1,16 @@
 """
 Model selection criteria for Gaussian Hidden Markov Models.
-Computes AIC and BIC across multiple regime counts to determine optimal state space.
+
+Computes AIC and BIC across candidate regime counts. To avoid look-ahead,
+call these only on training data (``WalkForwardHMM`` does this per window).
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
+
 import numpy as np
 import pandas as pd
-from hmmlearn.hmm import GaussianHMM
+
+from src.hmm_model import MarketRegimeHMM, _as_2d
 
 
 def count_free_parameters(
@@ -15,106 +19,104 @@ def count_free_parameters(
     covariance_type: str = "full",
 ) -> int:
     """
-    Calculate the exact number of free parameters in a Gaussian HMM.
+    Number of free parameters in a Gaussian HMM.
 
-    Parameters
-    ----------
-    n_components : int
-        Number of hidden states (K).
-    n_features : int
-        Number of observed dimensions (d).
-    covariance_type : str, default "full"
-        Type of covariance matrix ('full', 'diag').
-
-    Returns
-    -------
-    int
-        Total number of independent free parameters.
+    (K - 1) start probs + K(K - 1) transitions + K*d means + covariances,
+    where covariances are K*d(d+1)/2 (full), K*d (diag) or K (spherical).
     """
-    # Initial state probabilities sum to 1: K - 1 degrees of freedom
     init_params = n_components - 1
-
-    # Transition probability matrix rows sum to 1: K * (K - 1)
     trans_params = n_components * (n_components - 1)
-
-    # Emission means for each state: K * d
     mean_params = n_components * n_features
 
-    # Emission covariances
     if covariance_type == "full":
-        # Symmetric positive-definite matrix: d * (d + 1) / 2 per state
         cov_params = n_components * (n_features * (n_features + 1)) // 2
     elif covariance_type == "diag":
         cov_params = n_components * n_features
-    else:
+    elif covariance_type == "spherical":
         cov_params = n_components
+    elif covariance_type == "tied":
+        cov_params = (n_features * (n_features + 1)) // 2
+    else:
+        raise ValueError(f"Unknown covariance_type {covariance_type!r}")
 
     return init_params + trans_params + mean_params + cov_params
 
 
 def evaluate_regime_models(
     X: np.ndarray,
-    components_range: Optional[List[int]] = None,
+    components_range: Optional[Sequence[int]] = None,
     covariance_type: str = "full",
-    n_iter: int = 100,
+    n_iter: int = 200,
+    n_init: int = 10,
+    scale: bool = True,
+    min_covar: float = 1e-3,
     random_state: int = 42,
 ) -> pd.DataFrame:
     """
-    Fit HMMs across different candidate state counts and score AIC / BIC.
+    Fit HMMs for each candidate K and score AIC / BIC.
 
-    Formulas:
-        AIC = -2 * ln(L) + 2 * p
-        BIC = -2 * ln(L) + p * ln(N)
+        AIC = -2 ln(L) + 2p
+        BIC = -2 ln(L) + p ln(N)
 
-    Parameters
-    ----------
-    X : np.ndarray of shape (n_samples, n_features)
-        Input feature matrix.
-    components_range : Optional[List[int]], default None
-        List of hidden state counts to benchmark. Defaults to [2, 3, 4].
-    covariance_type : str, default "full"
-        Covariance structure.
-    n_iter : int, default 100
-        Maximum iterations for EM algorithm.
-    random_state : int, default 42
-        Reproducibility seed.
+    Likelihoods are computed on standardised features when ``scale=True``.
+    The scaling Jacobian is the same for every K, so rankings are unaffected.
+    A K whose fit fails on every EM start is reported with NaN scores
+    instead of crashing the whole comparison.
 
     Returns
     -------
-    pd.DataFrame
-        Ranked summary table containing Log-Likelihood, AIC, and BIC.
+    DataFrame sorted by BIC (best first).
     """
     if components_range is None:
         components_range = [2, 3, 4]
 
-    if X.ndim == 1:
-        X = X.reshape(-1, 1)
-
+    X = _as_2d(X)
     n_samples, n_features = X.shape
     results: List[Dict[str, float]] = []
 
     for k in components_range:
-        model = GaussianHMM(
-            n_components=k,
-            covariance_type=covariance_type,
-            n_iter=n_iter,
-            random_state=random_state,
-        )
-        model.fit(X)
-
-        log_likelihood = float(model.score(X))
         p = count_free_parameters(k, n_features, covariance_type)
-
-        aic = -2.0 * log_likelihood + 2.0 * p
-        bic = -2.0 * log_likelihood + p * np.log(n_samples)
+        try:
+            model = MarketRegimeHMM(
+                n_components=k,
+                covariance_type=covariance_type,
+                n_iter=n_iter,
+                n_init=n_init,
+                scale=scale,
+                min_covar=min_covar,
+                random_state=random_state,
+            ).fit(X)
+            ll = model.log_likelihood_
+            aic = -2.0 * ll + 2.0 * p
+            bic = -2.0 * ll + p * np.log(n_samples)
+        except (RuntimeError, ValueError):
+            ll = aic = bic = np.nan
 
         results.append({
             "States (K)": k,
             "Parameters (p)": p,
-            "Log-Likelihood": round(log_likelihood, 2),
+            "Log-Likelihood": round(ll, 2),
             "AIC": round(aic, 2),
             "BIC": round(bic, 2),
         })
 
-    summary_df = pd.DataFrame(results).sort_values("BIC").reset_index(drop=True)
-    return summary_df
+    return (
+        pd.DataFrame(results)
+        .sort_values("BIC", na_position="last")
+        .reset_index(drop=True)
+    )
+
+
+def select_n_components(
+    X: np.ndarray,
+    components_range: Sequence[int] = (2, 3, 4),
+    criterion: str = "bic",
+    **model_kwargs,
+) -> int:
+    """Return the K with the lowest AIC/BIC on X (use training data only)."""
+    col = {"aic": "AIC", "bic": "BIC"}[criterion]
+    table = evaluate_regime_models(X, components_range, **model_kwargs)
+    table = table.dropna(subset=[col])
+    if table.empty:
+        raise RuntimeError("No candidate K could be fitted.")
+    return int(table.sort_values(col).iloc[0]["States (K)"])

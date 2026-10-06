@@ -16,7 +16,7 @@ the use of these models or strategies.
 # Market Regime Detection via Walk-Forward Gaussian HMM
 [![CI Status](https://github.com/mehmetoaltekin/hmm-regime-detection/actions/workflows/ci.yml/badge.svg)](https://github.com/mehmetoaltekin/hmm-regime-detection/actions)
 
-An econometric and quantitative research framework...
+An econometric and quantitative research framework for out-of-sample market regime detection: rolling re-calibration, causal forward filtering, variance-sorted state labels and per-window model selection.
 
 ## 1. Theoretical Framework
 
@@ -52,26 +52,55 @@ where $\hat{L}$ is the maximized likelihood, $p$ is the number of free parameter
 
 ## 2. Installation & Quickstart
 
+```bash
 git clone https://github.com/mehmetoaltekin/hmm-regime-detection.git
-
 cd hmm-regime-detection
-
 pip install -r requirements.txt
+PYTHONPATH=. python examples/demo.py      # offline demo on synthetic data
+PYTHONPATH=. python -m pytest tests -v    # look-ahead & regression tests
+```
 
-# Minimal Usage Example
+### Minimal usage
 
-import numpy as np
-from src.data_loader import fetch_returns
+```python
+from src.data_loader import fetch_returns          # needs: pip install yfinance
 from src.hmm_model import WalkForwardHMM
 
-1. Load stationary features (log returns, rolling volatility)
-returns = fetch_returns("XAUUSD", start="2015-01-01", end="2024-01-01")
+# 1. Stationary features (log returns + Parkinson volatility)
+features = fetch_returns("XAUUSD", start="2015-01-01", end="2024-01-01")
 
-2. Initialize Walk-Forward Gaussian HMM (n_states=2, sorted by volatility)
-model = WalkForwardHMM(n_components=2, window_size=252, step_size=21)
+# 2. Walk-forward HMM: refit every 21 bars on the last 252 bars.
+#    Passing a list lets BIC choose K inside each training window.
+model = WalkForwardHMM(n_components=[2, 3], window_size=252, step_size=21)
 
-3. Compute out-of-sample filtered regime probabilities (strictly no future data)
-filtered_probs = model.fit_predict_filtered(returns)
+# 3. Out-of-sample filtered probabilities P(S_t | Y_1:t)
+out = model.fit_predict_filtered(features)
+out[["prob_regime_0", "prob_regime_1", "regime", "n_states"]].tail()
+```
+
+Offline alternative: `fetch_sample_data()` + `prepare_hmm_features()` (see `examples/demo.py`).
+
+### How the walk-forward avoids look-ahead
+
+At every refit time *t* the following uses only bars `< t`:
+
+| Step | What is estimated | Data used |
+|---|---|---|
+| Feature scaling | mean / std of each feature | training window |
+| Model selection | K by AIC/BIC (if a list is given) | training window |
+| EM calibration | start, transition, means, covariances (best of `n_init` restarts) | training window |
+| Filter warm-start | state belief at *t-1* | training window, forward filter |
+| Output | P(S_t \| Y_1:t) for bars *t … t+step-1* | causal forward filter |
+
+`tests/test_fixes.py::test_walk_forward_has_no_lookahead` corrupts all data after a cutoff and asserts every earlier output is unchanged.
+
+### Implementation notes
+
+* **Scaling.** Raw returns (~0.01) and annualised volatility (~0.2) differ by an order of magnitude, which makes full covariance matrices near-singular. Features are standardised with training-window statistics; `MarketRegimeHMM.means_` / `.covars_` report parameters back in original units.
+* **Multi-start EM.** `n_init` (default 10) independent EM runs; the highest log-likelihood is kept.
+* **Continuous filtering.** `predict_filtered_proba(X, prior_proba=...)` carries the previous belief through the transition matrix instead of restarting from `startprob_`, so there is no artificial jump at each refit.
+* **Covariance types.** `"full"` and `"diag"` are supported. `"tied"` has no per-state variance to sort by; `"spherical"` is stored inconsistently by hmmlearn 0.3.x.
+* **Choosing K.** Rolling volatility is highly autocorrelated, so information criteria tend to favour more states that slice volatility levels. Compare K candidates on economic interpretability, not BIC alone.
 
 ## 3. Limitations & Edge Cases
 
@@ -91,7 +120,7 @@ Consequently, the model naturally lags behind sudden liquidity cascades, flash c
 
 Gaussian Tail Underestimation: Asset returns systematically exhibit skewness and heavy tails (leptokurtosis). While Gaussian emissions ensure numerical stability and fast convergence during calibration, they structurally underestimate the frequency and impact of extreme tail events compared to fat-tailed alternatives like Student's $t$-distributions.
 
-Sensitivity to Initialization (Local Optima): Expectation-Maximization (Baum-Welch) is a hill climbing algorithm inherently sensitive to starting parameter vectors. Without multi start heuristics or informative priors, the optimization surface frequently traps the solver in local rather than global likelihood maxima.
+Sensitivity to Initialization (Local Optima): Expectation-Maximization (Baum-Welch) is a hill climbing algorithm inherently sensitive to starting parameter vectors. The implementation mitigates this with multi-start EM (`n_init` restarts, best likelihood kept), but a global maximum is still not guaranteed.
 
 Turnover & Execution Friction: In choppy, sideways markets, filtered probabilities often hover near decision thresholds. This regime jitter creates whipsaws triggering rapid portfolio reallocations that can quickly erode alpha through bid-ask spreads, exchange fees, and execution slippage.
 
