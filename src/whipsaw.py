@@ -66,7 +66,8 @@ def filter_regimes(
     n_states : array of shape (n_samples,), optional
         K in use on each bar (the ``n_states`` column). If the held regime
         does not exist in the current model (K shrank at a refit), the filter
-        moves to the argmax at once, ignoring the other rules. Pass it for
+        moves to the argmax at once, ignoring the other rules; this counts as
+        a switch for ``min_dwell``. Pass it for
         walk-forward output: without it, a held state that disappeared keeps
         its label until another state passes the threshold.
 
@@ -199,29 +200,36 @@ def switch_stats(regimes: ArrayLike, periods_per_year: int = 252) -> Dict[str, f
     }
 
 
-def detection_lag(
+def change_lags(
     true_states: ArrayLike,
     labels: ArrayLike,
     into: Optional[int] = None,
-) -> Dict[str, float]:
+) -> pd.DataFrame:
     """
-    Bars from each true regime change until ``labels`` first shows the new
-    state (synthetic data only, where the true states are known).
+    One row per true regime change: ``bar`` (position of the first bar of
+    the new regime), ``state`` (the new state), ``status`` and ``lag``.
 
     Only changes the label was tracking are timed: on the bar before the
-    change the label must show the old state. Other changes are
-    ``untracked`` (the label was NaN, had missed the previous regime, or had
-    already moved on a false alarm); accuracy covers those bars. A tracked
-    change is ``missed`` if the true state changes again before the label
-    catches up, and ``censored`` if the data ends first. Lags count every
-    bar, NaN labels included, and the mean and median exclude misses, so
-    always read them together with ``missed``.
+    change the label must show the old state. ``status`` is
+
+    * ``detected``  - the label shows the new state before the true state
+                      changes again; ``lag`` is the number of bars until then
+                      (0 = on the bar of the change), NaN labels included.
+    * ``missed``    - the true state changed again first.
+    * ``censored``  - the data ended first.
+    * ``untracked`` - the label was NaN on the bar before, or showed another
+                      state (it had missed the previous regime, or moved early
+                      on a false alarm); accuracy covers those bars.
+
+    A one-bar flicker of the label counts as a detection, which favours an
+    unfiltered label in comparisons. Synthetic data only, where the true
+    states are known.
 
     Parameters
     ----------
     true_states, labels : arrays of the same length
     into : int, optional
-        Count only changes into this state, e.g. 1 for the onset of stress
+        Keep only changes into this state, e.g. 1 for the onset of stress
         and 0 for the return to calm. Lags differ a lot by direction.
     """
     s = _as_float_1d(true_states)
@@ -231,31 +239,46 @@ def detection_lag(
     if np.isnan(s).any():
         raise ValueError("true_states must not contain NaN")
 
-    lags = []
-    changes = missed = censored = untracked = 0
+    rows = []
     change_points = np.flatnonzero(s[1:] != s[:-1]) + 1
     for i, t in enumerate(change_points):
         if into is not None and s[t] != into:
             continue
-        changes += 1
         if not lab[t - 1] == s[t - 1]:
-            untracked += 1
+            rows.append((t, s[t], "untracked", np.nan))
             continue
         end = change_points[i + 1] if i + 1 < len(change_points) else len(s)
         hit = np.flatnonzero(lab[t:end] == s[t])
         if hit.size:
-            lags.append(int(hit[0]))
-        elif end == len(s):
-            censored += 1
+            rows.append((t, s[t], "detected", float(hit[0])))
         else:
-            missed += 1
+            rows.append((t, s[t], "censored" if end == len(s) else "missed", np.nan))
+    return pd.DataFrame(rows, columns=["bar", "state", "status", "lag"]).astype(
+        {"bar": int, "state": float, "status": object, "lag": float}
+    )
+
+
+def detection_lag(
+    true_states: ArrayLike,
+    labels: ArrayLike,
+    into: Optional[int] = None,
+) -> Dict[str, float]:
+    """
+    Summary of ``change_lags``: counts by status and the mean / median lag
+    of detected changes. The lags exclude misses and untracked changes, so
+    read them with ``missed`` and ``tracked``; to compare two labels, pair
+    their ``change_lags`` on ``bar`` instead.
+    """
+    d = change_lags(true_states, labels, into=into)
+    n = d["status"].value_counts()
+    lags = d.loc[d["status"] == "detected", "lag"]
     return {
-        "changes": changes,
-        "tracked": changes - untracked,
+        "changes": len(d),
+        "tracked": len(d) - int(n.get("untracked", 0)),
         "detected": len(lags),
-        "missed": missed,
-        "censored": censored,
-        "untracked": untracked,
-        "mean_lag": float(np.mean(lags)) if lags else np.nan,
-        "median_lag": float(np.median(lags)) if lags else np.nan,
+        "missed": int(n.get("missed", 0)),
+        "censored": int(n.get("censored", 0)),
+        "untracked": int(n.get("untracked", 0)),
+        "mean_lag": float(lags.mean()) if len(lags) else np.nan,
+        "median_lag": float(lags.median()) if len(lags) else np.nan,
     }

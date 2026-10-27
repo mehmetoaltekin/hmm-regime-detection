@@ -44,7 +44,8 @@ def run_walk_forward(df_raw, vol_window):
 
 
 def label_stats(lab, truth):
-    """Turnover, accuracy and detection lag by direction (lags exclude misses)."""
+    """Turnover, accuracy and detection lag by direction. "timed" counts the
+    changes the label was tracking; lags are over the detected ones."""
     s = switch_stats(lab)
     onset = detection_lag(truth, lab, into=1)
     back = detection_lag(truth, lab, into=0)
@@ -52,10 +53,12 @@ def label_stats(lab, truth):
         "switches": s["switches"],
         "runs_<5": s["runs_under_5_bars"],
         "accuracy": float((lab == truth).mean()),
-        "lag_to_stress": onset["mean_lag"],
+        "timed_stress": onset["tracked"],
         "missed_stress": onset["missed"],
-        "lag_to_calm": back["mean_lag"],
+        "lag_to_stress": onset["mean_lag"],
+        "timed_calm": back["tracked"],
         "missed_calm": back["missed"],
+        "lag_to_calm": back["mean_lag"],
     }
 
 

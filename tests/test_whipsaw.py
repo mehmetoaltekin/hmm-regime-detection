@@ -12,6 +12,7 @@ from src.hmm_model import WalkForwardHMM
 from src.whipsaw import (
     add_filtered_regime,
     calm_vs_stress,
+    change_lags,
     detection_lag,
     filter_regimes,
     switch_stats,
@@ -87,6 +88,13 @@ def test_confirmation_requires_consecutive_bars():
     np.testing.assert_array_equal(out, [0, 0, 0, 0, 0, 0, 1])
 
 
+def test_confirmation_requires_the_same_new_state():
+    """Two different states each passing once is not a confirmation."""
+    P = np.array([[0.8, 0.1, 0.1], [0.1, 0.8, 0.1], [0.1, 0.1, 0.8], [0.1, 0.1, 0.8]])
+    out = filter_regimes(P, threshold=0.7, confirm_bars=2)
+    np.testing.assert_array_equal(out, [0, 0, 0, 2])
+
+
 def test_min_dwell_holds_exactly_min_dwell_bars():
     P = two_state([0.1] * 10 + [0.9] + [0.1] * 10)
     out = filter_regimes(P, threshold=0.7, confirm_bars=1, min_dwell=5)
@@ -144,6 +152,24 @@ def test_regime_missing_after_k_shrinks_forces_switch():
     ])
     out = filter_regimes(P, threshold=0.7, confirm_bars=2, n_states=[3, 3, 2, 2])
     np.testing.assert_array_equal(out, [2, 2, 0, 0])
+
+
+def test_forced_switch_after_k_shrinks_restarts_min_dwell():
+    P = np.array([[0.05, 0.05, 0.9]] * 6 + [[0.9, 0.1, 0.0]] + [[0.1, 0.9, 0.0]] * 4)
+    out = filter_regimes(P, threshold=0.7, confirm_bars=1, min_dwell=3,
+                         n_states=[3] * 6 + [2] * 5)
+    np.testing.assert_array_equal(out, [2] * 6 + [0, 0, 0, 1, 1])
+
+
+def test_wrapper_passes_n_states_for_k_shrink():
+    out = pd.DataFrame({
+        "prob_regime_0": [0.05, 0.05, 0.55, 0.55],
+        "prob_regime_1": [0.05, 0.05, 0.45, 0.45],
+        "prob_regime_2": [0.90, 0.90, 0.00, 0.00],
+        "n_states": [3.0, 3.0, 2.0, 2.0],
+    })
+    res = add_filtered_regime(out, threshold=0.7, confirm_bars=2)
+    assert res["regime_filtered"].tolist() == [2, 2, 0, 0]
 
 
 @pytest.mark.parametrize("k", [2, 3])
@@ -349,6 +375,28 @@ def test_detection_lag_by_direction():
     lab = [0, 0, 1, 1, 1, 1, 1, 0]
     assert detection_lag(true, lab, into=1)["mean_lag"] == 0
     assert detection_lag(true, lab, into=0)["mean_lag"] == 2
+
+
+def test_detection_lag_into_counts_one_direction():
+    true = [0, 0, 1, 1, 0, 0, 1, 1, 0]
+    assert detection_lag(true, true, into=1)["changes"] == 2
+    assert detection_lag(true, true, into=0)["changes"] == 2
+    assert detection_lag(true, true)["changes"] == 4
+
+
+def test_detection_lag_nan_label_before_change_is_untracked():
+    d = detection_lag([0, 0, 1, 1], [0, np.nan, 1, 1])
+    assert (d["untracked"], d["detected"]) == (1, 0)
+
+
+def test_change_lags_one_row_per_change():
+    true = [0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 1, 0]
+    lab = [0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0]
+    d = change_lags(true, lab)
+    assert d["bar"].tolist() == [3, 7, 10, 11]
+    assert d["status"].tolist() == ["detected", "detected", "missed", "untracked"]
+    np.testing.assert_array_equal(d["lag"], [2, 1, np.nan, np.nan])
+    assert change_lags([0, 0], [0, 0]).empty
 
 
 def test_detection_lag_rejects_nan_true_states():
