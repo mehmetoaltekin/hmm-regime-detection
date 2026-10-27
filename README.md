@@ -56,7 +56,7 @@ where $\hat{L}$ is the maximized likelihood, $p$ is the number of free parameter
 git clone https://github.com/mehmetoaltekin/hmm-regime-detection.git
 cd hmm-regime-detection
 pip install -r requirements.txt
-PYTHONPATH=. python examples/demo.py      # offline demo on synthetic data
+PYTHONPATH=. python examples/demo.py      # offline demo on synthetic data, with the whipsaw filter
 PYTHONPATH=. python -m pytest tests -v    # look-ahead & regression tests
 ```
 
@@ -102,13 +102,45 @@ At every refit time *t* the following uses only bars `< t`:
 * **Covariance types.** `"full"` and `"diag"` are supported. `"tied"` has no per-state variance to sort by; `"spherical"` is stored inconsistently by hmmlearn 0.3.x.
 * **Choosing K.** Rolling volatility is highly autocorrelated, so information criteria tend to favour more states that slice volatility levels. Compare K candidates on economic interpretability, not BIC alone.
 
+### Whipsaw filter
+
+The raw label (argmax of the filtered probabilities) flips whenever the probabilities hover near a boundary, and every flip is a trade. `src/whipsaw.py` turns the probabilities into a stickier label with three causal rules:
+
+| Rule | Parameter | Effect |
+|---|---|---|
+| Hysteresis | `threshold` (default 0.7) | switch only to a state with P ≥ threshold; an ambiguous bar keeps the current regime |
+| Confirmation | `confirm_bars` (default 2) | the same new state must pass the threshold on this many consecutive bars |
+| Minimum dwell | `min_dwell` (default 0) | hold a regime at least this many bars before the next switch |
+
+```python
+from src.whipsaw import add_filtered_regime, switch_stats
+
+out = model.fit_predict_filtered(features)
+out = add_filtered_regime(out, binary=True)      # adds stress_filtered: 0 calm, 1 not calm
+switch_stats(out["stress_filtered"])             # switches, switches per year, run lengths
+```
+
+* The label at bar *t* uses probabilities up to *t* only: it is known at the close of *t*; act on it at the next bar's open. `tests/test_whipsaw.py` checks this, also through the walk-forward.
+* `binary=True` compares calm (state 0) with everything else, which keeps one meaning when the walk-forward switches K between refits. With `binary=False` the label follows the K-state `regime`; if K shrinks and the held state disappears, the filter moves to the argmax at once.
+* Every switch goes to that bar's argmax, so the filtered label never switches more often than the raw argmax of the same probabilities.
+* The filter buys fewer switches with later detection. On the synthetic data of `examples/demo.py` (seed 42, 728 out-of-sample bars, 21 true regime changes, filter 0.7 × 2 bars):
+
+  | Volatility window | Label | Switches | Accuracy | Mean lag (bars) |
+  |---|---|---|---|---|
+  | 21 | raw | 15 | 0.73 | 9.1 |
+  | 21 | filtered | 15 | 0.70 | 10.2 |
+  | 5 | raw | 31 | 0.90 | 2.2 |
+  | 5 | filtered | 29 | 0.87 | 3.2 |
+
+  Here the feature window sets the lag far more than the filter does, and the filter helps only where the raw label really flips. Synthetic regimes are clean; real data (fat tails, intraday noise) flips more. Judge the filter by the costs it saves against the moves it misses, in the strategy itself, and fix its parameters before the backtest: each setting tried is one more trial.
+
 ## 3. Limitations & Edge Cases
 
 Inherent Detection Lag: Because filtered probabilities update strictly sequentially without looking ahead, the model inherently lags behind sudden market dislocations. Rapid, exogenous shocks are only recognized after a few confirming bars, meaning the initial move is absorbed before the regime shift is fully registered.
 
 Fat Tail Underestimation: Assuming Gaussian emissions keeps numerical optimization stable and fast, but real returns exhibit heavy tails (leptokurtosis). As a result, the model structurally underestimates the probability of extreme tail events compared to heavy tailed alternatives like Student's $t$-distributions.
 
-Whipsaw & Turnover Drag: In noisy or transitional market phases, probabilities can hover near decision boundaries, causing the model to flip rapidly between regimes. In live execution, this regime jitter leads to excessive turnover, accumulating execution slippage and transaction costs.
+Whipsaw & Turnover Drag: In noisy or transitional market phases, probabilities can hover near decision boundaries, causing the model to flip rapidly between regimes. In live execution, this regime jitter leads to excessive turnover, accumulating execution slippage and transaction costs. The whipsaw filter (`src/whipsaw.py`, see above) reduces the flips at the price of a later detection.
 
 ## 4. Methodological Limitations
 
