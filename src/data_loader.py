@@ -3,7 +3,7 @@ Data loading and stationary feature engineering module for financial time series
 Computes logarithmic returns, realized volatility, and Parkinson volatility.
 """
 
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 
@@ -158,7 +158,7 @@ def prepare_hmm_features(
 
 def fetch_sample_data(
     n_bars: int = 1000, seed: int = 42, return_states: bool = False
-):
+) -> Union[pd.DataFrame, Tuple[pd.DataFrame, pd.Series]]:
     """
     Generate synthetic regime-switching price data for offline testing and CI/CD pipelines.
 

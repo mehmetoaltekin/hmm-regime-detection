@@ -57,6 +57,7 @@ git clone https://github.com/mehmetoaltekin/hmm-regime-detection.git
 cd hmm-regime-detection
 pip install -r requirements.txt
 PYTHONPATH=. python examples/demo.py      # offline demo on synthetic data, with the whipsaw filter
+PYTHONPATH=. python examples/whipsaw_seeds.py   # whipsaw filter over seeds 0-9 (a few minutes)
 PYTHONPATH=. python -m pytest tests -v    # look-ahead & regression tests
 ```
 
@@ -120,19 +121,22 @@ out = add_filtered_regime(out, binary=True)      # adds stress_filtered: 0 calm,
 switch_stats(out["stress_filtered"])             # switches, switches per year, run lengths
 ```
 
-* The label at bar *t* uses probabilities up to *t* only: it is known at the close of *t*; act on it at the next bar's open. `tests/test_whipsaw.py` checks this, also through the walk-forward.
-* `binary=True` compares calm (state 0) with everything else, which keeps one meaning when the walk-forward switches K between refits. With `binary=False` the label follows the K-state `regime`; if K shrinks and the held state disappears, the filter moves to the argmax at once.
+* **Causal.** The label at bar *t* uses probabilities up to *t* only: it is known at the close of *t*; act on it at the next bar's open. `tests/test_whipsaw.py` checks every cut point, for the filter and for the DataFrame wrapper on walk-forward output (both label types), and shows that the check catches planted one-bar leaks.
+* **K changes.** `binary=True` compares calm (state 0) with everything else, which keeps one meaning when the walk-forward switches K between refits; its unfiltered counterpart is `prob_regime_0 < 0.5`. With `binary=False` the label follows the K-state `regime`: if K shrinks and the held state disappears, the filter moves to the argmax at once (pass `n_states` when calling `filter_regimes` directly); if K grows, the held label keeps its number although the states were re-estimated.
+* **Edge cases.** The first valid bar starts at the argmax and counts as a switch for `min_dwell`. A NaN row after that keeps the held regime, breaks a running confirmation and counts toward `min_dwell`. Use `threshold` > 0.5: at 0.5 or below a switch can happen on a tie.
 * Every switch goes to that bar's argmax, so the filtered label never switches more often than the raw argmax of the same probabilities.
-* The filter buys fewer switches with later detection. On the synthetic data of `examples/demo.py` (seed 42, 728 out-of-sample bars, 21 true regime changes, filter 0.7 × 2 bars):
+* **Cost: later detection.** `detection_lag` times only the changes the label was tracking, reports misses separately, and can split by direction (`into=1`: onset of stress, `into=0`: return to calm). `examples/whipsaw_seeds.py` (a few minutes) runs the demo's comparison on synthetic seeds 0–9, filter 0.7 × 2 bars, 19.6 true changes per seed on average. Mean (min–max) over seeds, misses summed over seeds, lags in bars excluding misses:
 
-  | Volatility window | Label | Switches | Accuracy | Mean lag (bars) |
-  |---|---|---|---|---|
-  | 21 | raw | 15 | 0.73 | 9.1 |
-  | 21 | filtered | 15 | 0.70 | 10.2 |
-  | 5 | raw | 31 | 0.90 | 2.2 |
-  | 5 | filtered | 29 | 0.87 | 3.2 |
+  | Vol. window | Label | Switches | Accuracy | Lag to stress | Missed | Lag to calm | Missed |
+  |---|---|---|---|---|---|---|---|
+  | 21 | raw | 19.0 (10–28) | 0.72 (0.60–0.87) | 1.1 (0.5–2.5) | 0 | 19.2 (16.9–21.0) | 28 |
+  | 21 | filtered | 17.6 (10–26) | 0.70 (0.58–0.86) | 2.2 (1.5–3.7) | 3 | 20.6 (18.0–22.2) | 26 |
+  | 5 | raw | 37.6 (22–59) | 0.86 (0.77–0.92) | 0.6 (0.2–1.0) | 2 | 3.8 (3.1–5.5) | 4 |
+  | 5 | filtered | 28.8 (18–44) | 0.84 (0.75–0.90) | 1.6 (1.1–2.1) | 5 | 5.5 (4.0–8.5) | 9 |
 
-  Here the feature window sets the lag far more than the filter does, and the filter helps only where the raw label really flips. Synthetic regimes are clean; real data (fat tails, intraday noise) flips more. Judge the filter by the costs it saves against the moves it misses, in the strategy itself, and fix its parameters before the backtest: each setting tried is one more trial.
+  Reading: with the fast 5-bar feature the filter removes about a quarter of the switches (−8.8 per seed, −2 to −30); with the 21-bar feature there is little to remove. In both cases it detects the onset of stress about one bar later (+0.5 to +1.4 bars per seed) and costs about 0.02 accuracy; with the 5-bar feature it also misses more short regimes (stress 2 → 5, calm 4 → 9 over the ten seeds). The slow 21-bar feature hardly delays the onset of stress but returns to calm about 15 bars later than the 5-bar one and misses most short calm spells. `examples/demo.py` shows one seed (42) and plots it.
+
+  Synthetic regimes are clean Gaussian draws; real data (fat tails, intraday noise) flips more. Judge the filter by the costs it saves against the moves it misses, in the strategy itself, and fix its parameters before the backtest: each setting tried is one more trial.
 
 ## 3. Limitations & Edge Cases
 

@@ -44,16 +44,18 @@ def run_walk_forward(df_raw, vol_window):
 
 
 def label_stats(lab, truth):
+    """Turnover, accuracy and detection lag by direction (lags exclude misses)."""
     s = switch_stats(lab)
-    d = detection_lag(truth, lab)
+    onset = detection_lag(truth, lab, into=1)
+    back = detection_lag(truth, lab, into=0)
     return {
         "switches": s["switches"],
-        "per_year": s["switches_per_year"],
-        "mean_run": s["mean_run"],
         "runs_<5": s["runs_under_5_bars"],
         "accuracy": float((lab == truth).mean()),
-        "mean_lag": d["mean_lag"],
-        "missed": d["missed"],
+        "lag_to_stress": onset["mean_lag"],
+        "missed_stress": onset["missed"],
+        "lag_to_calm": back["mean_lag"],
+        "missed_calm": back["missed"],
     }
 
 
@@ -86,8 +88,9 @@ def main():
         o = o.loc[common]
         rows[f"vol {vw:2d}, raw"] = label_stats((o["prob_stress"] > 0.5).astype(float), truth)
         rows[f"vol {vw:2d}, filtered"] = label_stats(o["stress_filtered"].astype(float), truth)
-    print(f"Calm vs not calm, {len(common)} out-of-sample bars "
-          f"(filter: P >= {THRESHOLD} on {CONFIRM_BARS} bars in a row):")
+    print(f"Calm vs not calm, {len(common)} out-of-sample bars, "
+          f"{switch_stats(truth)['switches']} true changes "
+          f"(filter: P >= {THRESHOLD} on {CONFIRM_BARS} bars in a row; lags in bars):")
     print(pd.DataFrame(rows).T.round(2).to_string())
 
     fig, (ax1, ax2) = plt.subplots(

@@ -31,6 +31,11 @@ import pandas as pd
 from src.hmm_model import ArrayLike
 
 
+def _as_float_1d(x: ArrayLike) -> np.ndarray:
+    """1D float array; pandas <NA> (e.g. an Int64 column) becomes NaN."""
+    return pd.Series(np.asarray(x, dtype=object)).to_numpy(dtype=float, na_value=np.nan)
+
+
 def filter_regimes(
     probs: ArrayLike,
     threshold: float = 0.7,
@@ -45,32 +50,49 @@ def filter_regimes(
     ----------
     probs : array of shape (n_samples, K)
         Filtered probabilities, e.g. the ``prob_regime_*`` columns of
-        ``WalkForwardHMM.fit_predict_filtered``. Rows containing NaN (bars
-        before the first refit) give NaN and restart the filter.
+        ``WalkForwardHMM.fit_predict_filtered``.
     threshold : float in (0, 1]
-        Minimum probability of the new state for a switch.
+        Minimum probability of the new state for a switch (``>=``). Use a
+        value above 0.5 for real hysteresis: at 0.5 or below a switch can
+        happen on a tie, and at 1/K or below every change of the argmax
+        passes.
     confirm_bars : int >= 1
         Consecutive bars the same new state must pass ``threshold``.
         1 switches on the first bar that passes.
     min_dwell : int >= 0
-        Minimum bars between two switches (0 or 1: no constraint).
+        Minimum bars between two switches (0 or 1: no constraint). The
+        first valid bar counts as a switch, so the first real switch can
+        come no earlier than ``min_dwell`` bars after it.
     n_states : array of shape (n_samples,), optional
         K in use on each bar (the ``n_states`` column). If the held regime
         does not exist in the current model (K shrank at a refit), the filter
-        moves to the argmax at once, ignoring the other rules.
+        moves to the argmax at once, ignoring the other rules. Pass it for
+        walk-forward output: without it, a held state that disappeared keeps
+        its label until another state passes the threshold.
 
     Returns
     -------
     np.ndarray of float, shape (n_samples,)
-        Regime per bar (NaN where ``probs`` is NaN). The first valid bar
-        starts at the argmax. Every switch goes to the bar's argmax, so the
-        filtered label never switches more often than the raw argmax.
+        Regime per bar, NaN where a row of ``probs`` contains NaN. The filter
+        starts at the argmax of the first valid row. A NaN row later on keeps
+        the held regime (it is no evidence of a change), breaks a running
+        confirmation and counts toward ``min_dwell``. Every switch goes to
+        the bar's argmax, so the filtered label never switches more often
+        than the raw argmax of the same probabilities.
+
+    Notes
+    -----
+    When K grows at a refit, the held label keeps its number although the
+    variance-sorted states were re-estimated, and a running confirmation
+    continues. ``add_filtered_regime(..., binary=True)`` avoids this.
     """
     P = np.asarray(probs, dtype=float)
     if P.ndim != 2:
         raise ValueError("probs must be 2D (n_samples, K)")
     if not 0.0 < threshold <= 1.0:
         raise ValueError("threshold must be in (0, 1]")
+    if int(confirm_bars) != confirm_bars or int(min_dwell) != min_dwell:
+        raise ValueError("confirm_bars and min_dwell must be integers")
     if confirm_bars < 1 or min_dwell < 0:
         raise ValueError("confirm_bars must be >= 1 and min_dwell >= 0")
     n = len(P)
@@ -88,7 +110,9 @@ def filter_regimes(
     for t in range(n):
         p = P[t]
         if np.isnan(p).any():
-            current, pending, count = -1, -1, 0
+            pending, count = -1, 0
+            if current >= 0:
+                since_switch += 1
             continue
 
         cand = int(np.argmax(p))
@@ -133,8 +157,9 @@ def add_filtered_regime(
 
     With ``binary=False`` the column ``regime_filtered`` uses the K-state
     labels of ``regime``. With ``binary=True`` the column ``stress_filtered``
-    is 0 (calm, state 0) or 1 (any higher-volatility state); compare it with
-    ``regime > 0``.
+    is 0 (calm, state 0) or 1 (any higher-volatility state); its unfiltered
+    counterpart is ``prob_regime_0 < 0.5``, not ``regime > 0`` (with K >= 3
+    the argmax can be state 0 while P(calm) < 0.5).
     """
     prob_cols = [c for c in out.columns if c.startswith("prob_regime_")]
     if not prob_cols:
@@ -160,7 +185,7 @@ def switch_stats(regimes: ArrayLike, periods_per_year: int = 252) -> Dict[str, f
     ``periods_per_year`` must match the bar size (252 for daily bars).
     NaN bars are dropped.
     """
-    r = pd.Series(np.asarray(regimes, dtype=float)).dropna().reset_index(drop=True)
+    r = pd.Series(_as_float_1d(regimes)).dropna().reset_index(drop=True)
     if r.empty:
         raise ValueError("no valid regime labels")
     switches = int((r != r.shift()).iloc[1:].sum())
@@ -174,34 +199,63 @@ def switch_stats(regimes: ArrayLike, periods_per_year: int = 252) -> Dict[str, f
     }
 
 
-def detection_lag(true_states: ArrayLike, labels: ArrayLike) -> Dict[str, float]:
+def detection_lag(
+    true_states: ArrayLike,
+    labels: ArrayLike,
+    into: Optional[int] = None,
+) -> Dict[str, float]:
     """
     Bars from each true regime change until ``labels`` first shows the new
     state (synthetic data only, where the true states are known).
 
-    A change counts as missed if the true state changes again before the
-    label catches up. Bars where ``labels`` is NaN are skipped.
+    Only changes the label was tracking are timed: on the bar before the
+    change the label must show the old state. Other changes are
+    ``untracked`` (the label was NaN, had missed the previous regime, or had
+    already moved on a false alarm); accuracy covers those bars. A tracked
+    change is ``missed`` if the true state changes again before the label
+    catches up, and ``censored`` if the data ends first. Lags count every
+    bar, NaN labels included, and the mean and median exclude misses, so
+    always read them together with ``missed``.
+
+    Parameters
+    ----------
+    true_states, labels : arrays of the same length
+    into : int, optional
+        Count only changes into this state, e.g. 1 for the onset of stress
+        and 0 for the return to calm. Lags differ a lot by direction.
     """
-    s = np.asarray(true_states, dtype=float)
-    lab = np.asarray(labels, dtype=float)
+    s = _as_float_1d(true_states)
+    lab = _as_float_1d(labels)
     if s.shape != lab.shape:
         raise ValueError("true_states and labels must have the same length")
-    valid = ~np.isnan(lab)
-    s, lab = s[valid], lab[valid]
+    if np.isnan(s).any():
+        raise ValueError("true_states must not contain NaN")
 
-    lags, missed = [], 0
+    lags = []
+    changes = missed = censored = untracked = 0
     change_points = np.flatnonzero(s[1:] != s[:-1]) + 1
     for i, t in enumerate(change_points):
+        if into is not None and s[t] != into:
+            continue
+        changes += 1
+        if not lab[t - 1] == s[t - 1]:
+            untracked += 1
+            continue
         end = change_points[i + 1] if i + 1 < len(change_points) else len(s)
         hit = np.flatnonzero(lab[t:end] == s[t])
         if hit.size:
             lags.append(int(hit[0]))
+        elif end == len(s):
+            censored += 1
         else:
             missed += 1
     return {
-        "changes": len(change_points),
+        "changes": changes,
+        "tracked": changes - untracked,
         "detected": len(lags),
         "missed": missed,
+        "censored": censored,
+        "untracked": untracked,
         "mean_lag": float(np.mean(lags)) if lags else np.nan,
         "median_lag": float(np.median(lags)) if lags else np.nan,
     }
