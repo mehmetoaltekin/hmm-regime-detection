@@ -3,7 +3,7 @@ Data loading and stationary feature engineering module for financial time series
 Computes logarithmic returns, realized volatility, and Parkinson volatility.
 """
 
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
 
@@ -156,7 +156,9 @@ def prepare_hmm_features(
     return feature_df, X
 
 
-def fetch_sample_data(n_bars: int = 1000, seed: int = 42) -> pd.DataFrame:
+def fetch_sample_data(
+    n_bars: int = 1000, seed: int = 42, return_states: bool = False
+) -> Union[pd.DataFrame, Tuple[pd.DataFrame, pd.Series]]:
     """
     Generate synthetic regime-switching price data for offline testing and CI/CD pipelines.
 
@@ -166,11 +168,15 @@ def fetch_sample_data(n_bars: int = 1000, seed: int = 42) -> pd.DataFrame:
         Number of synthetic daily bars to generate.
     seed : int, default 42
         Random seed for reproducibility.
+    return_states : bool, default False
+        If True, also return the true hidden states (0 = calm, 1 = stress)
+        as a Series on the same index, e.g. to measure detection lag.
 
     Returns
     -------
     pd.DataFrame
-        Synthetic OHLCV DataFrame.
+        Synthetic OHLCV DataFrame, or ``(DataFrame, states)`` if
+        ``return_states`` is True.
     """
     np.random.seed(seed)
     # Regime 0: Low vol bull (mu=0.0008, sigma=0.008)
@@ -195,15 +201,23 @@ def fetch_sample_data(n_bars: int = 1000, seed: int = 42) -> pd.DataFrame:
     ])
 
     close = 100.0 * np.exp(np.cumsum(returns))
-    high = close * (1.0 + np.abs(np.random.normal(0, 0.005, n_bars)))
-    low = close * (1.0 - np.abs(np.random.normal(0, 0.005, n_bars)))
+    # The bar range scales with the regime's sigma, so the Parkinson
+    # volatility feature carries the regime. With ln(H/L) = a*sigma*(|z1|+|z2|),
+    # E[ln(H/L)^2] = 4 ln2 sigma^2 when a^2 (2 + 4/pi) = 4 ln2.
+    sigma = np.array([params[s]["sigma"] for s in states])
+    a = np.sqrt(4.0 * np.log(2.0) / (2.0 + 4.0 / np.pi))
+    high = close * np.exp(a * sigma * np.abs(np.random.normal(0, 1.0, n_bars)))
+    low = close * np.exp(-a * sigma * np.abs(np.random.normal(0, 1.0, n_bars)))
     open_price = (high + low) / 2.0
 
     dates = pd.date_range(end="2026-01-01", periods=n_bars, freq="B")
-    return pd.DataFrame(
+    df = pd.DataFrame(
         {"Open": open_price, "High": high, "Low": low, "Close": close},
         index=dates,
     )
+    if return_states:
+        return df, pd.Series(states, index=dates, name="state")
+    return df
 
 
 # Common FX / metal symbols mapped to Yahoo Finance tickers.

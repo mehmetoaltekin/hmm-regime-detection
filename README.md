@@ -56,7 +56,8 @@ where $\hat{L}$ is the maximized likelihood, $p$ is the number of free parameter
 git clone https://github.com/mehmetoaltekin/hmm-regime-detection.git
 cd hmm-regime-detection
 pip install -r requirements.txt
-PYTHONPATH=. python examples/demo.py      # offline demo on synthetic data
+PYTHONPATH=. python examples/demo.py      # offline demo on synthetic data, with the whipsaw filter
+PYTHONPATH=. python examples/whipsaw_seeds.py   # whipsaw filter over seeds 0-9 (a few minutes)
 PYTHONPATH=. python -m pytest tests -v    # look-ahead & regression tests
 ```
 
@@ -102,13 +103,55 @@ At every refit time *t* the following uses only bars `< t`:
 * **Covariance types.** `"full"` and `"diag"` are supported. `"tied"` has no per-state variance to sort by; `"spherical"` is stored inconsistently by hmmlearn 0.3.x.
 * **Choosing K.** Rolling volatility is highly autocorrelated, so information criteria tend to favour more states that slice volatility levels. Compare K candidates on economic interpretability, not BIC alone.
 
+### Whipsaw filter
+
+The raw label (argmax of the filtered probabilities) flips whenever the probabilities hover near a boundary, and every flip is a trade. `src/whipsaw.py` turns the probabilities into a stickier label with three causal rules:
+
+| Rule | Parameter | Effect |
+|---|---|---|
+| Hysteresis | `threshold` (default 0.7) | switch only to a state with P ≥ threshold; an ambiguous bar keeps the current regime |
+| Confirmation | `confirm_bars` (default 2) | the same new state must pass the threshold on this many consecutive bars |
+| Minimum dwell | `min_dwell` (default 0) | hold a regime at least this many bars before the next switch |
+
+```python
+from src.whipsaw import add_filtered_regime, switch_stats
+
+out = model.fit_predict_filtered(features)
+out = add_filtered_regime(out, binary=True)      # adds stress_filtered: 0 calm, 1 not calm
+switch_stats(out["stress_filtered"])             # switches, switches per year, run lengths
+```
+
+* **Causal.** The label at bar *t* uses probabilities up to *t* only: it is known at the close of *t*; act on it at the next bar's open. `tests/test_whipsaw.py` checks every cut point, for the filter and for the DataFrame wrapper on walk-forward output (both label types), and shows that the check catches planted one-bar leaks.
+* **K changes.** `binary=True` compares calm (state 0) with everything else, which keeps one meaning when the walk-forward switches K between refits; its unfiltered counterpart is `prob_regime_0 < 0.5`. With `binary=False` the label follows the K-state `regime`: if K shrinks and the held state disappears, the filter moves to the argmax at once (pass `n_states` when calling `filter_regimes` directly); if K grows, the held label keeps its number although the states were re-estimated.
+* **Edge cases.** The first valid bar starts at the argmax and counts as a switch for `min_dwell`. A NaN row after that keeps the held regime, breaks a running confirmation and counts toward `min_dwell`. Use `threshold` > 0.5: at 0.5 or below a switch can happen on a tie.
+* Every switch goes to that bar's argmax, so the filtered label never switches more often than the raw argmax of the same probabilities.
+* **Cost: later detection.** `change_lags` lists every true change with its status and lag: *detected*, *missed* (the true state changed again first), *censored* (the data ended first) or *untracked* (on the bar before, the label was not on the old state, e.g. after missing the previous regime). `detection_lag` summarises it and can split by direction (`into=1`: onset of stress, `into=0`: return to calm). Two labels time different changes, so compare their lags on matched changes. `examples/whipsaw_seeds.py` (a few minutes) runs the demo's comparison on synthetic seeds 0–9 with the filter at 0.7 × 2 bars. Switches, accuracy and lags: mean (min–max) over seeds; timed and missed changes: summed over seeds; lags in bars over detected changes:
+
+  | Vol. window | Label | Switches | Accuracy | To stress: timed / missed | Lag to stress | To calm: timed / missed | Lag to calm |
+  |---|---|---|---|---|---|---|---|
+  | | true state | 19.6 (12–28) | 1.00 | 98 / 0 | 0 | 98 / 0 | 0 |
+  | 21 | raw | 19.0 (10–28) | 0.72 (0.60–0.87) | 63 / 0 | 1.1 (0.5–2.5) | 98 / 28 | 19.2 (16.9–21.0) |
+  | 21 | filtered | 17.6 (10–26) | 0.70 (0.58–0.86) | 64 / 3 | 2.2 (1.5–3.7) | 94 / 26 | 20.6 (18.0–22.2) |
+  | 5 | raw | 37.6 (22–59) | 0.86 (0.77–0.92) | 81 / 2 | 0.6 (0.2–1.0) | 96 / 4 | 3.8 (3.1–5.5) |
+  | 5 | filtered | 28.8 (18–44) | 0.84 (0.75–0.90) | 80 / 5 | 1.6 (1.1–2.1) | 93 / 9 | 5.5 (4.0–8.5) |
+
+  Reading:
+  * With the fast 5-bar feature the filter removes about a quarter of the switches (−8.8 per seed, −2 to −30); with the 21-bar feature there is little to remove (−1.4).
+  * On every change both labels detect, the filtered label is at least one bar later, because confirmation needs two bars. Per seed it is on average +1.0 to +1.4 bars later to stress, and to calm +1.0 to +1.6 bars with the 21-bar feature and up to +4.6 with the 5-bar one (+19 for a single change).
+  * It costs about 0.02 accuracy and, with the 5-bar feature, misses more short regimes (stress 2 → 5, calm 4 → 9 over the ten seeds).
+  * The slow 21-bar feature returns to calm about 15 bars later than the 5-bar one and never shows 28 of the 98 calm spells. After such a miss the label is already in stress, so 35 of the 98 stress onsets are never timed. On the 63 onsets it does time it is within about half a bar of the 5-bar feature (1.1 against 0.6 bars).
+
+  `examples/demo.py` shows one seed (42) and plots it.
+
+  Synthetic regimes are clean Gaussian draws; real data (fat tails, intraday noise) flips more. Judge the filter by the costs it saves against the moves it misses, in the strategy itself, and fix its parameters before the backtest: each setting tried is one more trial.
+
 ## 3. Limitations & Edge Cases
 
 Inherent Detection Lag: Because filtered probabilities update strictly sequentially without looking ahead, the model inherently lags behind sudden market dislocations. Rapid, exogenous shocks are only recognized after a few confirming bars, meaning the initial move is absorbed before the regime shift is fully registered.
 
 Fat Tail Underestimation: Assuming Gaussian emissions keeps numerical optimization stable and fast, but real returns exhibit heavy tails (leptokurtosis). As a result, the model structurally underestimates the probability of extreme tail events compared to heavy tailed alternatives like Student's $t$-distributions.
 
-Whipsaw & Turnover Drag: In noisy or transitional market phases, probabilities can hover near decision boundaries, causing the model to flip rapidly between regimes. In live execution, this regime jitter leads to excessive turnover, accumulating execution slippage and transaction costs.
+Whipsaw & Turnover Drag: In noisy or transitional market phases, probabilities can hover near decision boundaries, causing the model to flip rapidly between regimes. In live execution, this regime jitter leads to excessive turnover, accumulating execution slippage and transaction costs. The whipsaw filter (`src/whipsaw.py`, see above) reduces the flips at the price of a later detection.
 
 ## 4. Methodological Limitations
 
