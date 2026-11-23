@@ -6,8 +6,8 @@ Validates that future observations do not contaminate past filtered probabilitie
 import pytest
 import numpy as np
 
-from src.data_loader import fetch_sample_data, prepare_hmm_features
-from src.hmm_model import MarketRegimeHMM
+from hmm_regime.data_loader import fetch_sample_data, prepare_hmm_features
+from hmm_regime.hmm_model import MarketRegimeHMM
 
 
 @pytest.fixture
@@ -27,9 +27,9 @@ def test_state_sorting_by_variance(sample_feature_matrix: np.ndarray) -> None:
     model = MarketRegimeHMM(n_components=2, covariance_type="full", random_state=42)
     model.fit(X)
 
-    # Compute trace of covariance matrices
-    var_state_0 = np.trace(model.model.covars_[0])
-    var_state_1 = np.trace(model.model.covars_[1])
+    # Return variance of each state, in original units
+    var_state_0 = model.covars_[0][0, 0]
+    var_state_1 = model.covars_[1][0, 0]
 
     assert var_state_0 < var_state_1, (
         f"State ordering failure: State 0 var ({var_state_0:.6f}) "

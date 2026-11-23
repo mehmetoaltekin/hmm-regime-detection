@@ -7,9 +7,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.data_loader import fetch_sample_data, prepare_hmm_features
-from src.hmm_model import WalkForwardHMM
-from src.whipsaw import (
+from hmm_regime.data_loader import fetch_sample_data, prepare_hmm_features
+from hmm_regime.hmm_model import WalkForwardHMM
+from hmm_regime.whipsaw import (
     add_filtered_regime,
     calm_vs_stress,
     change_lags,
@@ -311,12 +311,32 @@ def test_add_filtered_regime_on_walk_forward_output(wf_output):
     assert res["regime_filtered"].isna().equals(out["regime"].isna())
     assert "regime_filtered" not in out  # input left untouched
 
-    binary = add_filtered_regime(out, binary=True)
-    stress = binary["stress_filtered"].dropna()
-    assert set(stress.unique()) <= {0, 1}
-    # unfiltered version of the same binary rule: argmax of [P(calm), P(not calm)]
-    raw_stress = (out["prob_regime_0"].dropna() < 0.5).astype(float)
-    assert n_switches(stress.to_numpy(float)) <= n_switches(raw_stress.to_numpy())
+    # unfiltered version of the same binary rule, for both definitions of stress
+    raw = {
+        "auto": (out["prob_stress"].dropna() > 0.5).astype(float),
+        "prob_stress": (out["prob_stress"].dropna() > 0.5).astype(float),
+        "state0": (out["prob_regime_0"].dropna() < 0.5).astype(float),
+    }
+    for stress_from, raw_stress in raw.items():
+        binary = add_filtered_regime(out, binary=True, stress_from=stress_from)
+        stress = binary["stress_filtered"].dropna()
+        assert set(stress.unique()) <= {0, 1}
+        assert n_switches(stress.to_numpy(float)) <= n_switches(raw_stress.to_numpy()), stress_from
+
+
+def test_binary_label_uses_prob_stress_when_present(wf_output):
+    auto = add_filtered_regime(wf_output, binary=True)["stress_filtered"]
+    explicit = add_filtered_regime(wf_output, binary=True, stress_from="prob_stress")["stress_filtered"]
+    pd.testing.assert_series_equal(auto, explicit)
+    # output without the column (e.g. saved by version 0.1) falls back to state 0 vs rest
+    old = wf_output.drop(columns="prob_stress")
+    legacy = add_filtered_regime(old, binary=True)["stress_filtered"]
+    state0 = add_filtered_regime(wf_output, binary=True, stress_from="state0")["stress_filtered"]
+    pd.testing.assert_series_equal(legacy, state0)
+    with pytest.raises(ValueError):
+        add_filtered_regime(old, binary=True, stress_from="prob_stress")
+    with pytest.raises(ValueError):
+        add_filtered_regime(wf_output, binary=True, stress_from="nonsense")
 
 
 def test_calm_vs_stress_pairs_sum_to_one():

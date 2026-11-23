@@ -7,9 +7,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.data_loader import fetch_sample_data, prepare_hmm_features
-from src.hmm_model import MarketRegimeHMM, WalkForwardHMM
-from src.model_selection import evaluate_regime_models, select_n_components
+from hmm_regime.data_loader import fetch_sample_data, prepare_hmm_features
+from hmm_regime.hmm_model import MarketRegimeHMM, WalkForwardHMM
+from hmm_regime.model_selection import evaluate_regime_models, select_n_components
 
 
 @pytest.fixture(scope="module")
@@ -49,8 +49,9 @@ def test_unscaled_params_reported_in_original_units(features):
 def test_diag_covariance_reorders(features, k):
     _, X = features
     model = MarketRegimeHMM(n_components=k, covariance_type="diag", n_init=3).fit(X)
-    traces = [np.trace(c) for c in model.model.covars_]
-    assert all(np.diff(traces) >= 0), traces
+    # default order: spread of the return (feature 0) around the window mean
+    spread = model.model.covars_[:, 0, 0] + model.model.means_[:, 0] ** 2
+    assert all(np.diff(spread) >= 0), spread
     probs = model.predict_filtered_proba(X[:50])
     np.testing.assert_allclose(probs.sum(axis=1), 1.0)
 
@@ -112,7 +113,7 @@ def test_walk_forward_has_no_lookahead(features):
     Xc[T:, 1] = 10.0
     shocked = WalkForwardHMM(**kwargs).fit_predict_filtered(Xc)
 
-    cols = ["prob_regime_0", "prob_regime_1", "prob_regime_2", "n_states"]
+    cols = ["prob_regime_0", "prob_regime_1", "prob_regime_2", "n_states", "prob_stress"]
     pd.testing.assert_frame_equal(base[cols].iloc[:T], shocked[cols].iloc[:T],
                                   check_exact=False, atol=1e-10)
 
