@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]               # license as an SPDX string
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,7 +8,8 @@ dynamic = ["version"]
 description = "Walk-forward Gaussian HMM market regime detection with causal forward filtering"
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Mehmet Altekin" }]
 keywords = ["hidden markov model", "regime detection", "walk-forward", "volatility", "quantitative finance"]
 dependencies = [
