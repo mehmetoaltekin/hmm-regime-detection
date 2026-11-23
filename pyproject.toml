@@ -3,7 +3,7 @@ requires = ["setuptools>=77"]               # license as an SPDX string
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "hmm-regime-detection"
+name = "hmm-regime"                       # pip install hmm-regime; import hmm_regime
 dynamic = ["version"]
 description = "Walk-forward Gaussian HMM market regime detection with causal forward filtering"
 readme = "README.md"
@@ -12,6 +12,19 @@ license = "MIT"
 license-files = ["LICENSE"]
 authors = [{ name = "Mehmet Altekin" }]
 keywords = ["hidden markov model", "regime detection", "walk-forward", "volatility", "quantitative finance"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Topic :: Scientific/Engineering :: Mathematics",
+]
 dependencies = [
     "numpy>=1.24.0",
     "pandas>=2.0.0",
@@ -21,10 +34,12 @@ dependencies = [
 [project.optional-dependencies]
 data = ["yfinance>=0.2.40"]        # fetch_returns()
 plot = ["matplotlib>=3.7.0"]       # examples/demo.py
-dev = ["pytest>=7.0.0", "matplotlib>=3.7.0"]
+dev = ["pytest>=7.0.0", "matplotlib>=3.7.0", "scipy>=1.10.0"]   # scipy: examples/demo.py
 
 [project.urls]
 Repository = "https://github.com/mehmetoaltekin/hmm-regime-detection"
+Changelog = "https://github.com/mehmetoaltekin/hmm-regime-detection/blob/main/CHANGELOG.md"
+Issues = "https://github.com/mehmetoaltekin/hmm-regime-detection/issues"
 
 [tool.setuptools]
 packages = ["hmm_regime"]          # src/ is a compatibility layer for checkouts, not installed

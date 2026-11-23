@@ -57,9 +57,11 @@ where $\hat{L}$ is the maximized likelihood, $p$ is the number of free parameter
 To use the library in your own project:
 
 ```bash
-pip install git+https://github.com/mehmetoaltekin/hmm-regime-detection.git
-pip install yfinance        # optional, only for fetch_returns()
+pip install hmm-regime                # core: numpy, pandas, hmmlearn
+pip install "hmm-regime[data]"        # also yfinance, for fetch_returns()
 ```
+
+The package is imported as `hmm_regime`. The latest unreleased code: `pip install git+https://github.com/mehmetoaltekin/hmm-regime-detection.git`.
 
 To run the examples and tests:
 
@@ -94,7 +96,7 @@ out = add_filtered_regime(out, binary=True)        # adds stress_filtered: 0 cal
 
 Offline alternative: `fetch_sample_data()` + `prepare_hmm_features()` (see `examples/demo.py`).
 
-Code written against version 0.1 (`from src.hmm_model import WalkForwardHMM`) still runs from a checkout; [`CHANGELOG.md`](CHANGELOG.md) lists what changed in the numbers and how to get the old behaviour, and [`AUDIT.md`](AUDIT.md) the findings behind it.
+Code written against version 0.1 (`from src.hmm_model import WalkForwardHMM`) still runs from a checkout; [`CHANGELOG.md`](https://github.com/mehmetoaltekin/hmm-regime-detection/blob/main/CHANGELOG.md) lists what changed in the numbers and how to get the old behaviour, and [`AUDIT.md`](https://github.com/mehmetoaltekin/hmm-regime-detection/blob/main/AUDIT.md) the findings behind it.
 
 ### How the walk-forward avoids look-ahead
 
