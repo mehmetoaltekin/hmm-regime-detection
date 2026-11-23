@@ -1,3 +1,5 @@
+# Everything needed to run the tests and the examples from a checkout.
+# To use the library in another project: pip install .   (see pyproject.toml)
 numpy>=1.24.0
 pandas>=2.0.0
 scipy>=1.10.0

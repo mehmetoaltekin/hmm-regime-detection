@@ -6,8 +6,8 @@ import pytest
 import numpy as np
 import pandas as pd
 
-from src.data_loader import fetch_sample_data, prepare_hmm_features
-from src.model_selection import count_free_parameters, evaluate_regime_models
+from hmm_regime.data_loader import fetch_sample_data, prepare_hmm_features
+from hmm_regime.model_selection import count_free_parameters, evaluate_regime_models
 
 
 def test_free_parameter_counting():
