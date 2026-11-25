@@ -223,11 +223,12 @@ If you use this architecture or reference this implementation in your research, 
 
 ```bibtex
 @software{altekin_hmm_regime_detection,
-  author       = {Altekin, Mehmet},
-  title        = {hmm-regime-detection: Quantitative market regime identification via Gaussian HMMs: walk-forward parameter estimation, state sorting, and information criteria (AIC/BIC) selection},
-  year         = {2026},
-  version      = {0.2.1},
-  publisher    = {GitHub},
-  howpublished = {\url{https://github.com/mehmetoaltekin/hmm-regime-detection}}
+  author    = {Altekin, Mehmet {\"O}mer},
+  title     = {hmm-regime: walk-forward Gaussian HMM market regime detection with causal forward filtering},
+  year      = {2026},
+  version   = {0.2.1},
+  publisher = {Zenodo},
+  doi       = {10.5281/zenodo.24524692},
+  url       = {https://doi.org/10.5281/zenodo.24524692}
 }
 ```
