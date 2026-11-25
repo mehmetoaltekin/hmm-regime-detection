@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Tests: `test_package_exports` checks that `__version__` is a normalised PEP 440 string instead of comparing it with a fixed number, so a version bump no longer breaks CI.
+
 ## 0.2.1
 
 - Published on PyPI as `hmm-regime` (`pip install hmm-regime`); the import name stays `hmm_regime`. Before, the distribution was named `hmm-regime-detection` and could only be installed from GitHub.

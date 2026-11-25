@@ -516,7 +516,13 @@ def test_three_state_simulation():
 
 # --- package and compatibility ------------------------------------------------------------
 def test_package_exports():
-    assert hmm_regime.__version__ == "0.2.1"
+    # Check the form, not the number: a hard-coded number broke CI on the 0.2.1 bump.
+    # The release workflow checks that the tag matches __version__.
+    from packaging.version import Version   # installed with pytest
+
+    version = hmm_regime.__version__
+    assert isinstance(version, str)
+    assert str(Version(version)) == version, "not a normalised PEP 440 version"
     for name in hmm_regime.__all__:
         assert hasattr(hmm_regime, name), name
 
