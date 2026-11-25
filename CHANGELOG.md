@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.1
 
 - Published on PyPI as `hmm-regime` (`pip install hmm-regime`); the import name stays `hmm_regime`. Before, the distribution was named `hmm-regime-detection` and could only be installed from GitHub.
 - `.github/workflows/publish.yml`: pushing a tag `vX.Y.Z` that matches `hmm_regime.__version__` builds the package, tests the built wheel and uploads it to PyPI (trusted publishing, no API token in the repository). Run by hand, it uploads to TestPyPI instead.
