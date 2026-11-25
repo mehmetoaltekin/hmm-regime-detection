@@ -11,6 +11,14 @@ authors:
 license: MIT
 repository-code: "https://github.com/mehmetoaltekin/hmm-regime-detection"
 repository-artifact: "https://pypi.org/project/hmm-regime/"
+doi: 10.5281/zenodo.24524691
+identifiers:
+  - description: Archived snapshots of all versions of hmm-regime (concept DOI, always resolves to the latest version).
+    type: doi
+    value: 10.5281/zenodo.24524691
+  - description: Archived snapshot of version 0.2.1 of hmm-regime.
+    type: doi
+    value: 10.5281/zenodo.24524692
 abstract: >-
   Python library for market regime detection with Gaussian hidden Markov models, built for
   out-of-sample research. The model is re-estimated on a rolling window (walk-forward), and
