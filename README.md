@@ -226,7 +226,7 @@ If you use this architecture or reference this implementation in your research, 
   author       = {Altekin, Mehmet},
   title        = {hmm-regime-detection: Quantitative market regime identification via Gaussian HMMs: walk-forward parameter estimation, state sorting, and information criteria (AIC/BIC) selection},
   year         = {2026},
-  version      = {0.2.0},
+  version      = {0.2.1},
   publisher    = {GitHub},
   howpublished = {\url{https://github.com/mehmetoaltekin/hmm-regime-detection}}
 }
