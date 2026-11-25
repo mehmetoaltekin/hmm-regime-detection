@@ -516,7 +516,7 @@ def test_three_state_simulation():
 
 # --- package and compatibility ------------------------------------------------------------
 def test_package_exports():
-    assert hmm_regime.__version__ == "0.2.0"
+    assert hmm_regime.__version__ == "0.2.1"
     for name in hmm_regime.__all__:
         assert hasattr(hmm_regime, name), name
 
