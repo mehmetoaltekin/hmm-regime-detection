@@ -1,8 +1,10 @@
 # STATUS
 
-Last updated: 2026-11-23. Version 0.2.0 (audit release) is merged into `main` (PR #3); CI passes on Python 3.10, 3.11, 3.12 and 3.13, on the PR and on `main` after the merge.
+Last updated: 2026-11-25. Version 0.2.1 is on PyPI as `hmm-regime` (tag `v0.2.1`) and archived on Zenodo (concept DOI 10.5281/zenodo.24524691, version 0.2.1: 10.5281/zenodo.24524692; see `CITATION.cff`). CI on `main` passes on Python 3.10, 3.11, 3.12 and 3.13.
 
 ## Where things stand
+- CI failed once on 2026-11-25 (run 45566970169): the 0.2.1 bump was pushed a minute before `test_package_exports`, which compared `__version__` with a fixed string, was updated. The test now checks only that the version is a normalised PEP 440 string, so a bump needs no test edit; the publish workflow still refuses a tag that does not match `__version__`.
+- A release also needs two hand edits after Zenodo has assigned the version DOI: `version`, `date-released` and the version DOI in `CITATION.cff`, and `version` and `doi` in the BibTeX block of `README.md`. `RELEASING.md` does not list them yet.
 - Library only: walk-forward Gaussian HMM with a causal forward filter, volatility-sorted states, K by AIC/BIC per window, whipsaw filter. No strategy and no real-data results in this repo.
 - 0.2.0 is the result of a code audit: findings and measurements in `AUDIT.md`, the list of changes in `CHANGELOG.md`. The code is now an installable package, `hmm_regime`; `from src...` imports still work from a checkout.
 - Main corrections: the first bar of a new sequence no longer starts from EM's one-state `startprob_`; state 0 is the lowest return volatility, not the lowest trace of all standardised features; the binary calm / stress label uses `prob_stress`, which keeps its meaning when K = 3; the covariance regulariser is a ridge on the diagonal; the selected K is calibrated once, not twice.
